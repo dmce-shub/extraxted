@@ -49,7 +49,7 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 from base64 import b64encode, b64decode
 
-@bot.on_message(filters.command(["cpd"])&  ~filters.edited)
+@bot.on_message(filters.command(["cpd"]))
 async def account_login(bot: Client, m: Message):
     editable = await m.reply_text("Send txt file**")
     input: Message = await bot.listen(editable.chat.id)
@@ -199,4 +199,4 @@ async def account_login(bot: Client, m: Message):
                 continue 
     except Exception as e:
         await m.reply_text(e)
-    await m.reply_text("Done")          
+    await m.reply_text("Done")
