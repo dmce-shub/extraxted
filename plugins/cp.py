@@ -1,237 +1,241 @@
-# MIT License
-# Copyright (c) 2019-present Dan <https://github.com/delivrance>
 
-import urllib
-import urllib.parse
 import requests
+import asyncio
 import json
-import subprocess
-import os
-import sys
-import re
-import time
-import logging
-import cloudscraper
 
-from base64 import b64encode, b64decode
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
-
-import pyrogram
-import tgcrypto
-import helper
-from pyromod import listen
 from pyrogram import Client, filters
-from pyrogram import Client as bot
-from pyrogram.types import User, Message, InlineKeyboardButton, InlineKeyboardMarkup
-from pyrogram.types.messages_and_media import message
-from pyrogram.errors import FloodWait
-from p_bar import progress_bar
-from subprocess import getstatusoutput
+from pyrogram.types import Message
 
 
-@bot.on_message(filters.command(["cp"]))
-async def account_login(bot: Client, m: Message):
-    global cancel
-    cancel = False
-    s = requests.Session()
-    
-    editable = await m.reply_text("**Send Token from ClassPlus App**")
-    input1: Message = await bot.listen(editable.chat.id)
-    raw_text0 = input1.text.strip()
-    
-    headers = {
-        'authority': 'api.classplusapp.com',
-        'accept': 'application/json, text/plain, */*',
-        'accept-language': 'en',
-        'api-version': '28',
-        'cache-control': 'no-cache',
-        'device-id': '516',
-        'origin': 'https://web.classplusapp.com',
-        'pragma': 'no-cache',
-        'referer': 'https://web.classplusapp.com/',
-        'region': 'IN',
-        'sec-ch-ua': '"Chromium";v="107", "Not=A?Brand";v="24"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Linux"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-site',
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-        'x-access-token': f'{raw_text0}'
-    
-    }
-    
-    resp = s.get('https://api.classplusapp.com/v2/batches/details?limit=20&offset=0&sortBy=createdAt', headers=headers)
-    
-    # 1. Ensure execution stops on HTTP error
-    if resp.status_code != 200:
-        await m.reply_text(f"❌ Login Failed (HTTP {resp.status_code}). Please check your token.")
-        return
+# Make sure your main bot instance is named "app"
+# If your bot instance has another name, replace "app" below.
 
-    res_json = resp.json()
-    
-    # 2. Safely parse response data structure
-    data_field = res_json.get("data", {})
-    if isinstance(data_field, list):
-        b_data = data_field
-    elif isinstance(data_field, dict):
-        b_data = data_field.get("totalBatches") or data_field.get("batches") or []
-    else:
-        b_data = []
 
-    if not b_data:
-        await m.reply_text("⚠️ No batches found for this account/token.")
-        return
+@app.on_message(filters.command(["cp"]))
+async def account_login(app: Client, m: Message):
+
+    editable = await m.reply_text(
+        "**🔐 Classplus Login**\n\n"
+        "Please send your Classplus access token."
+    )
 
     try:
-        await input1.delete(True)
-    except Exception:
-        pass
+        # Receive token
+        input1: Message = await app.listen(
+            editable.chat.id,
+            filters=filters.text,
+            timeout=60
+        )
 
-    cool = ""
-    FFF = "**BATCH-ID - BATCH NAME**"
-    for item in b_data:
-        t_name = item.get('batchName', 'N/A')
-        t_id = item.get('batchId') or item.get('id', 'N/A')
-        aa = f" ```{t_id}```  - **{t_name}**\n\n"
-        if len(f'{cool}{aa}') > 4096:
-            await editable.edit(f'**You have these batches :-**\n\n{FFF}\n\n{cool}')
-            cool = ""
-        cool += aa
+        if not input1.text:
+            await editable.edit("❌ No token received.")
+            return
 
-    if cool:
-        await editable.edit(f'**You have these batches :-**\n\n{FFF}\n\n{cool}')
+        token = input1.text.strip()
 
-    editable1 = await m.reply_text("**Now send the Batch ID to Download**")
-    input2: Message = await bot.listen(editable.chat.id)
-    cr = input2.text.strip()
-    
-    try:
-        await editable1.delete(True)
-        await input2.delete(True)
-    except Exception:
-        pass
+        # Clean token
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
 
-    resp = s.get(f'https://api.classplusapp.com/v2/course/content/get?courseId={cr}', headers=headers)
-    if resp.status_code != 200:
-        await m.reply_text("❌ Failed to fetch course content. Invalid Batch ID.")
-        return
+        # Validate basic input
+        if not token or len(token) < 10:
+            await editable.edit("❌ Invalid token format.")
+            return
 
-    b_data = resp.json().get('data', {}).get('courseContent', [])
-    cool = ""
-    FFF = "**FOLDER-ID - FOLDER NAME**"
-    for item in b_data:
-        id1 = item.get('id', '')
-        nam2 = item.get('name', '')
-        aa = f" ```{id1}```      - **{nam2}**\n\n"
-        if len(f'{cool}{aa}') > 4096:
-            await editable.edit(f'**You have these Folders :-**\n\n{FFF}\n\n{cool}')
-            cool = ""
-        cool += aa
+        # Classplus API headers
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "en",
+            "api-version": "28",
+            "cache-control": "no-cache",
+            "device-id": "516",
+            "origin": "https://web.classplusapp.com",
+            "pragma": "no-cache",
+            "referer": "https://web.classplusapp.com/",
+            "region": "IN",
+            "user-agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/107.0.0.0 Safari/537.36"
+            ),
+            "x-access-token": token
+        }
 
-    if cool:
-        await editable.edit(f'**You have these Folders :-**\n\n{FFF}\n\n{cool}')
+        # API endpoint
+        url = (
+            "https://api.classplusapp.com/"
+            "v2/batches/details"
+            "?limit=20&offset=0&sortBy=createdAt"
+        )
 
-    editable1 = await m.reply_text("**Now send the Folder ID to Download**")
-    input3: Message = await bot.listen(editable.chat.id)
-    raw_text2 = input3.text.strip()
-    
-    try:
-        await editable1.delete(True)
-        await input3.delete(True)
-    except Exception:
-        pass
+        await editable.edit(
+            "⏳ **Checking Classplus authentication...**"
+        )
 
-    resp = s.get(f'https://api.classplusapp.com/v2/course/content/get?courseId={cr}&folderId={raw_text2}', headers=headers)
-    if resp.status_code != 200:
-        await m.reply_text("❌ Failed to fetch subfolder content.")
-        return
+        # Make API request without blocking bot
+        def fetch_data():
+            with requests.Session() as session:
+                return session.get(
+                    url,
+                    headers=headers,
+                    timeout=25
+                )
 
-    respc = resp.json()
-    ddata = respc.get('data', {}).get('courseContent', [])
-    if not ddata:
-        await m.reply_text("⚠️ This folder is empty.")
-        return
+        response = await asyncio.to_thread(fetch_data)
 
-    if ddata[0].get("contentType") == 1:
-        cool = ""
-        FFF = "**FOLDER-ID - FOLDER NAME - TOTAL VIDEOS/PDFS**"
-        for datas in ddata:
-            id2 = datas.get('id', '')
-            nam2 = datas.get('name', '')
-            vid2 = datas.get('resources', {}).get('videos', 0)
-            fid = datas.get('resources', {}).get('files', 0)
-            aa = f" ```{id2}``` - **{nam2} - {vid2} Videos / {fid} Files**\n\n"
-            if len(f'{cool}{aa}') > 4096:
-                await editable.edit(f'**You have these Folders :-**\n\n{FFF}\n\n{cool}')
-                cool = ""
-            cool += aa
+        # Handle HTTP errors
+        if response.status_code != 200:
 
-        if cool:
-            await editable.edit(f'**You have these Folders :-**\n\n{FFF}\n\n{cool}')
+            try:
+                error_data = response.json()
+                error_text = json.dumps(
+                    error_data,
+                    indent=2
+                )
+            except ValueError:
+                error_text = response.text
 
-        editable1 = await m.reply_text("**Now send the Folder ID to Download**")
-        input4: Message = await bot.listen(editable.chat.id)
-        raw_text4 = input4.text.strip()
-        
+            await editable.edit(
+                "❌ **Classplus API Request Failed**\n\n"
+                f"**HTTP Status:** `{response.status_code}`\n\n"
+                f"**Server Response:**\n"
+                f"```{error_text[:2500]}```\n\n"
+                "Please check the API response."
+            )
+            return
+
+        # Parse JSON
         try:
-            await editable1.delete(True)
-            await input4.delete(True)
+            result = response.json()
+
+        except ValueError:
+            await editable.edit(
+                "❌ **Invalid API Response**\n\n"
+                "Classplus did not return valid JSON.\n\n"
+                f"Response:\n`{response.text[:1500]}`"
+            )
+            return
+
+        if not isinstance(result, dict):
+            await editable.edit(
+                "❌ Unexpected API response format."
+            )
+            return
+
+        # Extract response data
+        data = result.get("data", {})
+
+        batches = []
+
+        if isinstance(data, list):
+            batches = data
+
+        elif isinstance(data, dict):
+
+            possible_keys = [
+                "totalBatches",
+                "batches",
+                "batchList",
+                "items"
+            ]
+
+            for key in possible_keys:
+
+                value = data.get(key)
+
+                if isinstance(value, list):
+                    batches = value
+                    break
+
+        # Check for batches
+        if not batches:
+
+            response_preview = json.dumps(
+                result,
+                indent=2
+            )
+
+            await editable.edit(
+                "⚠️ **API Request Successful, But No Batches Found**\n\n"
+                "**Response received:**\n"
+                f"```{response_preview[:2500]}```"
+            )
+            return
+
+        # Delete token message for privacy
+        try:
+            await input1.delete()
         except Exception:
             pass
 
-        resp = s.get(f'https://api.classplusapp.com/v2/course/content/get?courseId={cr}&folderId={raw_text4}', headers=headers)
-        bdat = resp.json().get('data', {}).get('courseContent', [])
-        bdat.reverse()
+        # Format batches
+        output = ""
+        skipped = 0
 
-        cool = ""
-        FFF = "**Topic-ID - Topic NAME**"
-        mm = "careerplus1"
-        
-        if os.path.exists(f"{mm}.txt"):
-            os.remove(f"{mm}.txt")
+        for item in batches:
 
-        for item in bdat:
-            id1 = item.get('id', '')
-            nam2 = item.get('name', '')
-            dis2 = item.get('description', '')
-            url2 = item.get('url', '')
-            aa = f" ```{id1}``` - **{nam2}  -{dis2}**\n\n"
-            if len(f'{cool}{aa}') > 4096:
-                cool = ""
-            cool += aa
-            with open(f'{mm}.txt', 'a', encoding='utf-8') as f:
-                f.write(f"{nam2}-{dis2}:{url2}\n")
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
 
-        if os.path.exists(f"{mm}.txt"):
-            await m.reply_document(f"{mm}.txt")
-        await editable.edit(f'**You have these Videos :-**\n\n{FFF}\n\n{cool}')
+            batch_name = item.get(
+                "batchName",
+                "N/A"
+            )
 
-    else:
-        ddata.reverse()
-        cool = ""
-        FFF = "**Topic-ID - Topic NAME**"
-        mm = "classplus"
+            batch_id = (
+                item.get("batchId")
+                or item.get("id")
+                or "N/A"
+            )
 
-        if os.path.exists(f"{mm}.txt"):
-            os.remove(f"{mm}.txt")
+            entry = (
+                f"`{batch_id}` - **{batch_name}**\n\n"
+            )
 
-        for item in ddata:
-            id2 = str(item.get('id', ''))
-            nam2 = item.get('name', '')
-            url2 = item.get('url', '')
-            des2 = item.get('description', '')
+            if len(output) + len(entry) > 3500:
 
-            aa = f" ```{id2}``` - **{nam2}  -{des2}**\n\n"
-            if len(f'{cool}{aa}') > 4096:
-                cool = ""
-            cool += aa
+                await m.reply_text(
+                    "**✅ Classplus Login Successful!**\n\n"
+                    "**BATCH ID - BATCH NAME**\n\n"
+                    + output
+                )
 
-            with open(f'{mm}.txt', 'a', encoding='utf-8') as f:
-                f.write(f"{nam2}-{des2}:{url2}\n")
+                output = ""
 
-        if os.path.exists(f"{mm}.txt"):
-            await m.reply_document(f"{mm}.txt")
-        await editable.edit(f'**You have these Videos :-**\n\n{FFF}\n\n{cool}')
-        await m.reply_text("**Now Press /cpd to Download**")
+            output += entry
+
+        # Send remaining batches
+        if output:
+
+            await editable.edit(
+                "**✅ Classplus Login Successful!**\n\n"
+                "**BATCH ID - BATCH NAME**\n\n"
+                + output
+            )
+
+        elif skipped:
+            await editable.edit(
+                "⚠️ No valid batch entries were found."
+            )
+
+    except asyncio.TimeoutError:
+
+        await editable.edit(
+            "⌛ **Time Expired**\n\n"
+            "You did not send a token within 60 seconds."
+        )
+
+    except requests.RequestException as e:
+
+        await editable.edit(
+            "❌ **Network Error**\n\n"
+            f"`{str(e)[:1000]}`"
+        )
+
+    except Exception as e:
+
+        await editable.edit(
+            "❌ **Unexpected Error**\n\n"
+            f"`{str(e)[:1000]}`"
+        )
