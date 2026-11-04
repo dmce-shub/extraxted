@@ -59,6 +59,7 @@ async def account_login(bot: Client, m: Message):
         'sec-fetch-site': 'same-site',
         'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
         'x-access-token': f'{raw_text0}'
+        'orgcode': 'QNQKBM'
     
     }
     
