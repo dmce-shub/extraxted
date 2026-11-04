@@ -36,6 +36,7 @@ from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors import FloodWait
 import time
+from pyrogram import Client as bot
 from pyrogram.types import User, Message
 from p_bar import progress_bar
 from subprocess import getstatusoutput
@@ -43,236 +44,230 @@ import logging
 import os
 import sys
 import re
-from pyrogram import Client as bot
 import cloudscraper
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 from base64 import b64encode, b64decode
 
-ACCOUNT_ID = "6206459123001"
-BCOV_POLICY = "BCpkADawqM1474MvKwYlMRZNBPoqkJY-UWm7zE1U769d5r5kqTjG0v8L-THXuVZtdIQJpfMPB37L_VJQxTKeNeLO2Eac_yMywEgyV9GjFDQ2LTiT4FEiHhKAUvdbx9ku6fGnQKSMB8J5uIDd"
-bc_url = (f"https://edge.api.brightcove.com/playback/v1/accounts/{ACCOUNT_ID}/videos")
-bc_hdr = {"BCOV-POLICY": BCOV_POLICY}
-
-@bot.on_message(filters.command(["cw"]))
+@bot.on_message(filters.command(["cp"]) & ~filters.edited)
 async def account_login(bot: Client, m: Message):
     global cancel
     cancel = False
-
-    url = "https://elearn.crwilladmin.com/api/v1/login-other"
-    data = {
-        "deviceType": "android",
-        "password": "",
-        "deviceIMEI": "08750aa91d7387ab",
-        "deviceModel": "Realme RMX2001",
-        "deviceVersion": "R(Android 11.0)",
-        "email": "",
-        "deviceToken": "fYdfgaUaQZmYP7vV4r2rjr:APA91bFPn3Z4m_YS8kYQSthrueUh-lyfxLghL9ka-MT0m_4TRtlUu7cy90L8H6VbtWorg95Car6aU9zjA-59bZypta9GNNuAdUxTnIiGFxMCr2G3P4Gf054Kdgwje44XWzS9ZGa4iPZh"
-       }
-    headers = {
-        "Host": "elearn.crwilladmin.com",
-        "Token": "",
-        "Usertype": "",
-        "Appver": "1.55",
-        "Apptype": "android",
-        "Content-Type": "application/json; charset=UTF-8",
-        "Content-Length": "313",
-        "Accept-Encoding": "gzip, deflate",
-        "user-agent": "okhttp/5.0.0-alpha.2",
-        'Connection': 'Keep-Alive'
-       }
-    #proxy_host = ['47.254.153.200:80']
-    #proxies = {
-     #       'https': proxy_host,
-     #       'http': proxy_host,
-     #   }
-    editable = await m.reply_text("Send **ID & Password** in this manner otherwise bot will not respond.\n\nSend like this:-  **ID*Password** \n or \nSend **TOKEN** like This this:-  **TOKEN**" )
-    input1: Message = await bot.listen(editable.chat.id)
-    raw_text = input1.text
     s = requests.Session()
-    if "*" in raw_text:
-      data["email"] = raw_text.split("*")[0]
-      data["password"] = raw_text.split("*")[1]
-      await input1.delete(True)
-      #s = requests.Session()
-      response = s.post(url = url, headers=headers, json=data, timeout=10)
-      if response.status_code == 200:
-          data = response.json()
-          token = data["data"]["token"]
-          await m.reply_text(token)
-      else:
-           await m.reply_text("go back to response")
-      #token = "4ffd1627981589c0a1261f7a114fbbf8bc87c6d9"
-      await m.reply_text(f"```{token}```")
+    
+    # --- Start OTP Login Flow ---
+    editable = await m.reply_text("**Send Org Code (e.g., SPCC):**")
+    input_org: Message = await bot.listen(editable.chat.id)
+    org_code = input_org.text.strip().lower()
+    await input_org.delete(True)
+    
+    await editable.edit("**Send Phone Number (10 digits):**")
+    input_phone: Message = await bot.listen(editable.chat.id)
+    phone_number = input_phone.text.strip()
+    await input_phone.delete(True)
+    
+    login_headers = {
+        'authority': 'api.classplusapp.com',
+        'accept': 'application/json, text/plain, */*',
+        'api-version': '28',
+        'device-id': '516',
+        'origin': 'https://web.classplusapp.com',
+        'referer': 'https://web.classplusapp.com/',
+        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'
+    }
+    
+    await editable.edit("**Requesting OTP...**")
+    otp_payload = {
+        "orgCode": org_code,
+        "mobileNumber": phone_number
+    }
+    
+    try:
+        otp_res = s.post('https://api.classplusapp.com/v2/otp/generate', headers=login_headers, json=otp_payload)
+        otp_res_data = otp_res.json()
+        
+        if otp_res.status_code != 200 or otp_res_data.get('status') == 'error':
+            return await editable.edit(f"**Failed to Generate OTP!**\nResponse: {otp_res.text}")
+            
+        session_id = otp_res_data['data']['sessionId']
+    except Exception as e:
+        return await editable.edit(f"**Error generating OTP:** {str(e)}")
+
+    await editable.edit("**OTP sent successfully! Please enter the OTP:**")
+    input_otp: Message = await bot.listen(editable.chat.id)
+    otp_code = input_otp.text.strip()
+    await input_otp.delete(True)
+    
+    await editable.edit("**Verifying OTP...**")
+    verify_payload = {
+        "otp": otp_code,
+        "orgCode": org_code,
+        "mobileNumber": phone_number,
+        "sessionId": session_id
+    }
+    
+    try:
+        verify_res = s.post('https://api.classplusapp.com/v2/users/verify', headers=login_headers, json=verify_payload)
+        verify_res_data = verify_res.json()
+        
+        if verify_res.status_code != 200 or verify_res_data.get('status') == 'error':
+            return await editable.edit(f"**Failed to Verify OTP!**\nResponse: {verify_res.text}")
+            
+        raw_text0 = verify_res_data['data']['token']
+    except Exception as e:
+        return await editable.edit(f"**Error verifying OTP:** {str(e)}")
+    
+    await editable.edit("**Login Successful! Fetching batches...**")
+    # --- End OTP Login Flow ---
+
+    headers = {
+    'authority': 'api.classplusapp.com',
+    'accept': 'application/json, text/plain, */*',
+    'accept-language': 'en',
+    'api-version': '28',
+    'cache-control': 'no-cache',
+    'device-id': '516',
+    'origin': 'https://web.classplusapp.com',
+    'pragma': 'no-cache',
+    'referer': 'https://web.classplusapp.com/',
+    'region': 'IN',
+    'sec-ch-ua': '"Chromium";v="107", "Not=A?Brand";v="24"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Linux"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-site',
+    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
+    'x-access-token':f'{raw_text0}'
+    }
+    
+    resp = s.get('https://api.classplusapp.com/v2/batches/details?limit=20&offset=0&sortBy=createdAt', headers=headers)
+    if resp.status_code==200:
+        pass
     else:
-      token = raw_text
-    html1 = s.get("https://elearn.crwilladmin.com/api/v1/comp/my-batch?&token=" + token).json()
-    topicid = html1["data"]["batchData"]
-    cool=""
-    for data in topicid:
-        instructorName=(data["instructorName"])
-        FFF="**BATCH-ID - BATCH NAME - INSTRUCTOR**"
-        aa =f" ```{data['id']}```      - **{data['batchName']}**\n{data['instructorName']}\n\n"
-        #aa=f"**Batch Name -** {data['batchName']}\n**Batch ID -** ```{data['id']}```\n**By -** {data['instructorName']}\n\n"
-        if len(f'{cool}{aa}')>4096:
-            await m.reply_text(aa)
-            cool =""
-        cool+=aa
+        editable = await m.reply_text("Login Failed Check Response")
+    b_data = resp.json()["data"]["totalBatches"]
+    print(b_data)
+    cool = ""
+    for data in b_data:
+        t_name =data['batchName']
+        t_id =data['batchId']
+        FFF = "**BATCH-ID - BATCH NAME**"
+        aa = f" ```{t_id}```  - **{t_name}**\n\n"
+        if len(f'{cool}{aa}') > 4096:
+            print(aa)
+            cool = ""
+        cool += aa
     await editable.edit(f'{"**You have these batches :-**"}\n\n{FFF}\n\n{cool}')
-    editable1= await m.reply_text("**Now send the Batch ID to Download**")
+    editable1 = await m.reply_text("**Now send the Batch ID to Download**")
+    input2 = message = await bot.listen(editable.chat.id)
+    cr = input2.text
+    resp = s.get(f'https://api.classplusapp.com/v2/course/content/get?courseId={cr}', headers=headers)
+    print(resp.content)
+    b_data = resp.json()['data']['courseContent']
+    cool = ""
+    for data in b_data:
+        id1 = data['id']
+        nam2 =  data["name"]
+        content =  data["contentType"]
+        FFF = "**FOLDER-ID - FOLDER NAME**"
+        aa = f" ```{id1}```      - **{nam2}**\n\n"
+        if len(f'{cool}{aa}') > 4096:
+            print(aa)
+            cool = ""
+        cool += aa
+    await editable.edit(f'{"**You have these Folders :-**"}\n\n{FFF}\n\n{cool}')
+    editable1 = await m.reply_text("**Now send the Folder ID to Download**")
     input2 = message = await bot.listen(editable.chat.id)
     raw_text2 = input2.text
-    html2 = s.get("https://elearn.crwilladmin.com/api/v1/comp/batch-topic/"+raw_text2+"?type=class&token="+token).json()
-    topicid = html2["data"]["batch_topic"]
-    bn = html2["data"]["batch_detail"]["name"]
-    vj=""
-    for data in topicid:
-        tids = (data["id"])
-        idid=f"{tids}&"
-        if len(f"{vj}{idid}")>4096:
-            await m.reply_text(idid)
-            vj = ""
-        vj+=idid
-    vp = ""
-    for data in topicid:
-        tn = (data["topicName"])
-        tns=f"{tn}&"
-        if len(f"{vp}{tn}")>4096:
-            await m.reply_text(tns)
-            vp=""
-        vp+=tns
-    cool1 = ""
-    for data in topicid:
-        t_name=(data["topicName"].replace(" ",""))
-        tid = (data["id"])
-        scraper = cloudscraper.create_scraper()
-        ffx = s.get("https://elearn.crwilladmin.com/api/v1/comp/batch-detail/"+raw_text2+"?redirectBy=mybatch&topicId="+tid+"&token="+token).json()
-            #ffx = json.loads(html3)
-        vcx =ffx["data"]["class_list"]["batchDescription"]
-        vvx =ffx["data"]["class_list"]["classes"]
-        vvx.reverse()
-        zz= len(vvx)
-        BBB = f"{'**TOPIC-ID - TOPIC - VIDEOS**'}"
-        hh = f"```{tid}```     - **{t_name} - ({zz})**\n"
-
-#         hh = f"**Topic -** {t_name}\n**Topic ID - ** ```{tid}```\nno. of videos are : {zz}\n\n"
-
-        if len(f'{cool1}{hh}')>4096:
-            await m.reply_text(hh)
-            cool1=""
-        cool1+=hh
-    await m.reply_text(f'Batch details of **{bn}** are:\n\n{BBB}\n\n{cool1}\n\n**{vcx}**')
-    editable2= await m.reply_text(f"Now send the **Topic IDs** to Download\n\nSend like this **1&2&3&4** so on\nor copy paste or edit **below ids** according to you :\n\n**Enter this to download full batch :-**\n```{vj}```")    
+    await editable1.delete(True)
+    resp = s.get(f'https://api.classplusapp.com/v2/course/content/get?courseId={cr}&folderId={raw_text2}', headers=headers)
+    bdata = resp.json()['data']['courseContent']
+    cool = ""
+    for data in bdata:
+        id1 = data['id']
+        nam2 =  data["name"]
+        vid =  data["resources"]["videos"]
+        fid =  data["resources"]["files"]
+        content =  data["contentType"]
+        FFF = "**FOLDER-ID -FOLDER NAME -TOTAL VIDEOS/PDFS**"
+        aa = f" ```{id1}``` - **{nam2}  -{vid} -{fid}**\n\n"
+        if len(f'{cool}{aa}') > 4096:
+            cool = ""
+        cool += aa
+    await editable.edit(f'{"**You have these Folders :-**"}\n\n{FFF}\n\n{cool}')
+    await input2.delete(True)
+    editable1 = await m.reply_text("**Now send the Folder ID to Download**")
     input3 = message = await bot.listen(editable.chat.id)
     raw_text3 = input3.text
-    try:
-        xv = raw_text3.split('&')
-        for y in range(0,len(xv)):
-            t =xv[y]
+    await editable1.delete(True)
+    respc = s.get(f'https://api.classplusapp.com/v2/course/content/get?courseId={cr}&folderId={raw_text3}', headers=headers).json()
+    ddata = respc['data']['courseContent']
+    
+    if (respc["data"]["courseContent"][0]["contentType"]) ==1:
+        bdata = resp.json()['data']['courseContent']
+        cool = ""
+        for datas in ddata:
+            id2 = datas['id']
+            nam2 =  datas["name"]
+            vid2 =  datas["resources"]["videos"]
+            fid =  datas["resources"]["files"]
+            content =  datas["contentType"]
+            print(id2,nam2,vid)
+            FFF = "**FOLDER-ID -FOLDER NAME -TOTAL VIDEOS/PDFS**"
+            aa = f" ```{id2}``` - **{nam2} -{vid2}**\n\n"
+            if len(f'{cool}{aa}') > 4096:
+                cool = ""
+            cool += aa
+        await editable.edit(f'{"**You have these Folders :-**"}\n\n{FFF}\n\n{cool}')
+        await input2.delete(True)
+        editable1 = await m.reply_text("**Now send the Folder ID to Download**")
+        input4 = message = await bot.listen(editable.chat.id)
+        raw_text4 = input4.text
+        await editable1.delete(True)
+        resp = s.get(f'https://api.classplusapp.com/v2/course/content/get?courseId={cr}&folderId={raw_text4}', headers=headers)
+        bdat = resp.json()['data']['courseContent']
+        bdat.reverse()
+        cool = ""
+        vj1 = ""
+        for data in bdat:
+            id1 = data['id']
+            nam2 =  data["name"]
+            dis2 = data["description"]
+            url2 = data["url"]
+            content =  data["contentType"]
+            FFF = "**Topic-ID -Topic NAME **"
+            aa = f" ```{id2}``` - **{nam2}  -{dis2}**\n\n"
+            if len(f'{vj1}{aa}') > 4096:
+                cool = ""
+            cool += aa
+            mm = "careerplus1"
+            with open(f'{mm}.txt', 'a') as f:
+                    f.write(f"{nam2}-{dis2}:{url2}\n")
+        await m.reply_document(f"{mm}.txt")
+        await input4.delete(True)
+        await editable.edit(f'{"**You have these Videos :-**"}\n\n{FFF}\n\n{cool}')
+    else:
+        ddata.reverse()
+        cool = ""
+        vj = ""
         
-#              xvv = raw_text9.split('&')
-#              for z in range(0,len(xvv)):
-#                  p =xvv[z]
-
-            #gettting all json with diffrent topic id https://elearn.crwilladmin.com/api/v1/comp/batch-detail/881?redirectBy=mybatch&topicId=2324&token=d76fce74c161a264cf66b972fd0bc820992fe57
-            #scraper = cloudscraper.create_scraper()
-            html4 = s.get("https://elearn.crwilladmin.com/api/v1/comp/batch-detail/"+raw_text2+"?redirectBy=mybatch&topicId="+t+"&token="+token).content
-            ff = json.loads(html4)
-            #vc =ff.json()["data"]["class_list"]["batchDescription"]
-            mm = ff["data"]["class_list"]["batchName"].replace("/ "," ")
-            vv =ff["data"]["class_list"]["classes"]
-            vv.reverse()
-            #clan =f"**{vc}**\n\nNo of links found in topic-id {raw_text3} are **{len(vv)}**"
-            #await m.reply_text(clan)
-            count = 1
-            try:
-                for data in vv:
-                    vidid = (data["id"])
-                    lessonName = (data["lessonName"]).replace("/", "_")
-                    
-                    bcvid = (data["lessonUrl"][0]["link"])
-                     #lessonName = re.sub('\|', '_', cf)
-
-                    if bcvid.startswith("62"):
-                        try:
-                            #scraper = cloudscraper.create_scraper()
-                            html6 = s.get(f"{bc_url}/{bcvid}", headers=bc_hdr).content
-                            video = json.loads(html6)
-                            video_source = video["sources"][5]
-                            video_url = video_source["src"]
-                            #print(video_url)
-                            #scraper = cloudscraper.create_scraper()
-                            html5 = s.get("https://elearn.crwilladmin.com/api/v1/livestreamToken?type=brightcove&vid="+vidid+"&token="+token).content
-                            surl = json.loads(html5)
-                            stoken = surl["data"]["token"]
-                            #print(stoken)
-                            
-                            link = (video_url+"&bcov_auth="+stoken)
-                            #print(link)
-                        except Exception as e:
-                            print(str(e))
-                    #cc = (f"{lessonName}:{link}")
-                    #await m.reply_text(cc)
-                    elif bcvid.startswith("63"):
-                        try:
-                            #scraper = cloudscraper.create_scraper()
-                            html7 = s.get(f"{bc_url}/{bcvid}", headers=bc_hdr).content
-                            video1 = json.loads(html7)
-                            video_source1 = video1["sources"][5]
-                            video_url1 = video_source1["src"]
-                            #print(video_url)
-                            #scraper = cloudscraper.create_scraper()
-                            html8 = s.get("https://elearn.crwilladmin.com/api/v1/livestreamToken?type=brightcove&vid="+vidid+"&token="+token).content
-                            surl1 = json.loads(html8)
-                            stoken1 = surl1["data"]["token"]
-                            #print(stoken)
-                            
-                            link = (video_url1+"&bcov_auth="+stoken1)
-                            #print(link)
-                        except Exception as e:
-                            print(str(e))
-                    #cc = (f"{lessonName}:{link}")
-                    #await m.reply_text(cc)
-                    else:
-                        link=("https://www.youtube.com/embed/"+bcvid)
-                    cc = (f"{lessonName}::{link}")
-                    with open(f"{mm }{t_name}.txt", 'a') as f:
-                        f.write(f"{lessonName}:{link}\n")
-                    #await m.reply_document(f"{mm }{t_name}.txt")
-            except Exception as e:
-                await m.reply_text(str(e))
-        await m.reply_document(f"{mm }{t_name}.txt")
-        #os.remove(f"{mm }{t_name}.txt")
-    except Exception as e:
-        await m.reply_text(str(e))
-    try:
-        notex = await m.reply_text("Do you want download notes ?\n\nSend **y** or **n**")
-        input5:message = await bot.listen (editable.chat.id)
-        raw_text5 = input5.text
-        if raw_text5 == 'y':
-            scraper = cloudscraper.create_scraper()
-            html7 = scraper.get("https://elearn.crwilladmin.com/api/v1/comp/batch-notes/"+raw_text2+"?topicid="+raw_text2+"&token="+token).content
-            pdfD=json.loads(html7)
-            k=pdfD["data"]["notesDetails"]
-            bb = len(pdfD["data"]["notesDetails"])
-            ss = f"Total PDFs Found in Batch id **{raw_text2}** is - **{bb}** "
-            await m.reply_text(ss)
-            k.reverse()
-            count1 = 1
-            try:
-                
-                for data in k:
-                    name=(data["docTitle"])
-                    s=(data["docUrl"]) 
-                    xi =(data["publishedAt"])
-                    with open(f"{mm }{t_name}.txt", 'a') as f:
-                        f.write(f"{name}:{s}\n")
-                    continue
-                await m.reply_document(f"{mm }{t_name}.txt")
-                    
-            except Exception as e:
-                await m.reply_text(str(e))
-            #await m.reply_text("Done")
-    except Exception as e:
-        print(str(e))
-    await m.reply_text("Done")
+        for data in ddata:
+            id2 = str(data['id'])
+            nam2 =  data["name"]
+            url2=  data["url"]
+            des2=  data["description"]
+            
+            FFF = "**Topic-ID -Topic NAME **"
+            aa = f" ```{id2}``` - **{nam2}  -{des2}**\n\n"
+            if len(f'{vj}{aa}') > 4096:
+                cool = ""
+            cool += aa
+            
+            mm = "classplus"
+            with open(f'{mm}.txt', 'a') as f:
+                    f.write(f"{nam2}-{des2}:{url2}\n")
+        await m.reply_document(f"{mm}.txt")           
+        await editable.edit(f'{"**You have these Videos :-**"}\n\n{FFF}\n\n{cool}')
+        await input3.delete(True)
+        await m.reply_text("**Now Press /cpd to Download **")
