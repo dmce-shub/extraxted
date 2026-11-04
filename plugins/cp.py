@@ -58,8 +58,8 @@ async def account_login(bot: Client, m: Message):
         'sec-fetch-mode': 'cors',
         'sec-fetch-site': 'same-site',
         'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-        'x-access-token': '{raw_text0}'
-        'orgCode': 'QNQKBN'
+        'x-access-token': f'{raw_text0}'
+    
     }
     
     resp = s.get('https://api.classplusapp.com/v2/batches/details?limit=20&offset=0&sortBy=createdAt', headers=headers)
